@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.env
+storage/*.db
+storage/runs/*
+storage/history/*
+storage/charts/*
+storage/reports/*
+storage/logs/*
+!storage/**/.gitkeep
