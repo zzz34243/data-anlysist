@@ -6,11 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "multi-agent-marketing"
 version = "0.2.0"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1", "pydantic>=2.0,<3"]
+dependencies = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1", "pydantic>=2.0,<3", "python-dotenv>=1.0,<2"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
 
 [tool.setuptools.package-data]
 app = ["static/*.html"]
-

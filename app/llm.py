@@ -117,7 +117,7 @@ def build_llm_provider(settings: Any) -> LLMProvider:
         return OpenAICompatibleLLMProvider(
             api_keys=silicon_keys,
             base_url=getattr(settings, "siliconflow_base_url", "https://api.siliconflow.cn/v1"),
-            model=getattr(settings, "siliconflow_model", "Qwen/Qwen3-235B-A22B-Instruct-2507"),
+            model=getattr(settings, "siliconflow_model", "deepseek-ai/DeepSeek-V4-Flash"),
             provider_name="siliconflow",
             timeout_seconds=float(getattr(settings, "llm_timeout_seconds", 90)),
             max_tokens=int(getattr(settings, "llm_max_tokens", 1800)),

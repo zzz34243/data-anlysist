@@ -373,7 +373,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/retention/cleanup -Method Post | Con
 run(payload: dict, context: dict) -> dict
 ~~~
 
-app/llm.py 提供 OpenAI 兼容的 LLMProvider。当前默认优先接入硅基流动，使用 `Qwen/Qwen3-235B-A22B-Instruct-2507`（中等价格档、中文分析和结构化输出能力较完整）；具体可用性以你的硅基流动模型广场为准。如果该模型不可用，只需把 `SILICONFLOW_MODEL` 改成模型广场中的准确 ID，不需要改代码。也支持切换到 OpenAI 兼容接口。
+app/llm.py 提供 OpenAI 兼容的 LLMProvider。当前默认优先接入硅基流动，使用 `deepseek-ai/DeepSeek-V4-Flash`，用于中文营销策略和报告生成；该 ID 已通过硅基流动 `/models` 接口验证。如果模型广场以后发生变化，只需把 `SILICONFLOW_MODEL` 改成模型广场中的准确 ID，不需要改代码。也支持切换到 OpenAI 兼容接口。
 
 在启动服务前设置环境变量（Key 只保存在本机，不要写入源码）：
 
@@ -382,7 +382,7 @@ $env:LLM_PROVIDER = "siliconflow"
 $env:SILICONFLOW_API_KEY = "你的硅基流动Key"
 # 可选的第二个 Key；主 Key 遇到限流/鉴权错误时自动尝试
 $env:SILICONFLOW_API_KEY_FALLBACK = "备用Key"
-$env:SILICONFLOW_MODEL = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+$env:SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 ~~~
 
 如果不设置 Key，系统自动使用离线确定性模式，销售额、筛选、验证和图表仍可运行。`/health` 会返回当前 `llm_provider` 和 `llm_model`，不会返回 Key。

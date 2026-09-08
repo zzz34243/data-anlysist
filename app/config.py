@@ -4,6 +4,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+
+# Local credentials live in .env, which is excluded by .gitignore.
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -19,7 +25,7 @@ class Settings:
     siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "")
     siliconflow_api_key_fallback: str = os.getenv("SILICONFLOW_API_KEY_FALLBACK", "")
     siliconflow_base_url: str = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
-    siliconflow_model: str = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen3-235B-A22B-Instruct-2507")
+    siliconflow_model: str = os.getenv("SILICONFLOW_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.6-sol")
