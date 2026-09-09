@@ -19,6 +19,7 @@ class Settings:
     cleanup_interval_seconds: int = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "3600"))
     max_filter_rows: int = int(os.getenv("MAX_FILTER_ROWS", "5000"))
     max_retries: int = int(os.getenv("MAX_RETRIES", "1"))
+    max_excel_upload_mb: int = int(os.getenv("MAX_EXCEL_UPLOAD_MB", "100"))
     # LLM credentials are read only from the process environment. Never put
     # real keys in source control or in the frontend request body.
     llm_provider: str = os.getenv("LLM_PROVIDER", "auto")

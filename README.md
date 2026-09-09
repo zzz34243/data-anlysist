@@ -8,12 +8,12 @@
 
 | 步骤 | 智能体 | 作用 |
 | --- | --- | --- |
-| 1 | data_preparation | 读取 CSV/JSON、统一日期/金额/数量、筛选数据、标记异常 |
+| 1 | data_preparation | 读取网页上传的 Excel 或 API 提交的 CSV/JSON，统一日期/金额/数量、筛选数据、标记异常 |
 | 2 | visualization | 生成柱状对比图和线性趋势图 |
 | 3 | insights | 计算时间趋势、产品/渠道分布、异常和倾向 |
 | 4 | validator | 独立复算指标，验证 Findings |
 | 5 | marketing | 根据已验证结论生成人群、渠道、节奏和指标建议 |
-| 6 | report | 汇总数据、图表、洞察、验证和策略，生成 Markdown 报告 |
+| 6 | report | 汇总数据、图表、洞察、验证和策略，生成带图 PDF 报告和 Markdown 归档 |
 | 7 | validator | 检查最终报告文件是否存在且非空，完成最终复核 |
 
 共享记忆分为 Plan、Todo、Findings 三类：Plan 只允许主控修改；Todo 由对应智能体维护；Findings 采用追加方式，只有独立验证智能体可以修改验证状态。
@@ -23,6 +23,7 @@
 ~~~text
 app/
   api.py                  FastAPI 路由和生命周期管理
+  excel_reader.py         读取和校验上传的 Excel 工作簿
   orchestrator.py         主控编排、重试、trace、重放
   selection.py            prompt 优化、filter、devote、指标白名单
   memory.py               SQLite 共享记忆和 RAG 历史检索
@@ -62,7 +63,7 @@ pip install -r requirements.txt
 pip install -e .
 ~~~
 
-.env.example 是配置参考文件。项目当前不自动读取 .env；如果需要修改配置，请在启动前设置环境变量：
+.env.example 是配置参考文件。项目会自动读取根目录中的 `.env`；也可以在启动前设置环境变量：
 
 ~~~powershell
 $env:STORAGE_PATH = "storage"
@@ -71,6 +72,7 @@ $env:RETENTION_DAYS = "7"
 $env:CLEANUP_INTERVAL_SECONDS = "3600"
 $env:MAX_FILTER_ROWS = "5000"
 $env:MAX_RETRIES = "1"
+$env:MAX_EXCEL_UPLOAD_MB = "100"
 ~~~
 
 主要配置：
@@ -81,8 +83,9 @@ $env:MAX_RETRIES = "1"
 | DATABASE_PATH | storage/app.db | SQLite 文件位置 |
 | RETENTION_DAYS | 7 | 生成文件的保留天数，至少按 1 天处理 |
 | CLEANUP_INTERVAL_SECONDS | 3600 | 后台清理间隔；代码最低按 60 秒等待 |
-| MAX_FILTER_ROWS | 5000 | 送入后续智能体的最大数据行数 |
+| MAX_FILTER_ROWS | 5000 | 保存供抽查和重放的最大明细样本行数；全量本地聚合不受此限制 |
 | MAX_RETRIES | 1 | 单节点失败后的重试次数 |
+| MAX_EXCEL_UPLOAD_MB | 100 | 网页和 Excel API 允许的最大上传文件大小（MB） |
 
 ## 4. 启动、停止和示例
 
@@ -93,7 +96,7 @@ $env:MAX_RETRIES = "1"
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ~~~
 
-浏览器打开 http://127.0.0.1:8000。修改 Python 文件后，--reload 会自动重启开发服务。
+浏览器打开 http://127.0.0.1:8000。前端采用 DIV + CSS 布局，分为页头、菜单导航、中间内容区和页脚。主页面是主控对话，左侧显示历史项目与运行记录；报告中心、图表中心和运行日志作为二级页面。修改 Python 文件后，--reload 会自动重启开发服务。
 
 停止服务：在运行 Uvicorn 的终端按 Ctrl+C。
 
@@ -115,7 +118,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 python scripts/run_demo.py
 ~~~
 
-命令会输出 run_id、报告路径和两张图表路径。示例输入位于 data/sample_sales.csv。
+命令会输出 run_id、PDF/Markdown 报告路径和两张图表路径。示例输入位于 data/sample_sales.csv。
 
 ### 4.4 健康检查
 
@@ -135,7 +138,9 @@ FastAPI 会自动提供交互式接口文档：
 
 ### 5.1 输入方式
 
-完整分析支持两种输入方式，二选一：
+网页端只接受 Excel 文件上传，支持 `.xlsx`、`.xlsm` 和 `.xls`。系统自动读取第一张包含表头和数据的工作表，跳过完全空白的工作表和数据行，首个非空行作为表头。
+
+Excel 至少需要日期列，以及销售额列；如果没有销售额列，也可以同时提供销量和单价，系统会用“销量 × 单价”计算销售额。API 仍兼容原有的两种程序化输入方式：
 
 1. JSON 对象数组：通过 data 传入；
 2. CSV 文件路径：通过 csv_path 传入，使用 UTF-8/UTF-8-BOM 读取。
@@ -147,10 +152,13 @@ FastAPI 会自动提供交互式接口文档：
 | date | date、日期、time、时间 |
 | amount | amount、sales、revenue、销售额、金额 |
 | quantity | quantity、qty、销量、数量 |
+| price | price、unitprice、unit_price、单价 |
 | product | product、产品、sku、品类 |
 | channel | channel、渠道 |
 
-数据准备智能体会统一日期、金额和数量格式，并在 anomaly_flags 中记录缺失、非法或负金额。
+常见电商列名 `InvoiceDate`、`OrderDate`、`Description`、`ProductName`、`StockCode` 也可识别。上传文件只在内存中读取；项目仍会按照既有机制把标准化后的数据、图表和报告保存在本地 `storage/` 中。
+
+数据准备智能体会统一日期、金额和数量格式，并在 anomaly_flags 中记录缺失、非法或负金额。筛选后的全部数据先在本地计算总额、销量、日期范围以及月度、季度、年度、产品和渠道聚合；`MAX_FILTER_ROWS` 只限制留档的明细样本，不影响统计、趋势和图表。月度图显示完整时间范围；当首月或末月并非完整自然月时，报告会标记不完整月份，并使用完整月份判断趋势、峰值和低值，避免部分月份造成误判。
 
 ### 5.2 线上/线下默认数据类型
 
@@ -204,7 +212,21 @@ Invoke-RestMethod http://127.0.0.1:8000/api/agents/data_preparation/run -Method 
 
 ## 7. 完整分析 API
 
-### 7.1 JSON 数据示例
+### 7.1 Excel 上传（网页使用的接口）
+
+打开 http://127.0.0.1:8000 后，选择 Excel 文件并点击“上传并开始分析”。也可以通过 PowerShell 7 调用同一接口：
+
+~~~powershell
+$form = @{
+  file = Get-Item 'D:\销售ma demo\dataset\sales.xlsx'
+  project_name = 'Excel 销售分析'
+  request = '分析销售和季节趋势，并给出下一周期营销建议'
+  product_mode = 'offline'
+}
+Invoke-RestMethod http://127.0.0.1:8000/api/analyze/excel -Method Post -Form $form
+~~~
+
+### 7.2 JSON 数据示例
 
 ~~~powershell
 $body = @{
@@ -224,7 +246,7 @@ $result = Invoke-RestMethod http://127.0.0.1:8000/api/analyze -Method Post -Cont
 $result | ConvertTo-Json -Depth 12
 ~~~
 
-### 7.2 CSV 示例
+### 7.3 CSV 示例
 
 ~~~powershell
 $body = @{
@@ -236,7 +258,7 @@ $body = @{
 Invoke-RestMethod http://127.0.0.1:8000/api/analyze -Method Post -ContentType 'application/json' -Body $body
 ~~~
 
-### 7.3 返回结果
+### 7.4 返回结果
 
 成功响应包含：
 
@@ -248,6 +270,9 @@ Invoke-RestMethod http://127.0.0.1:8000/api/analyze -Method Post -ContentType 'a
 - validation、report_validation：两次独立复核结果；
 - strategy：营销动作、目标人群、渠道和衡量指标；
 - report.path、snapshot_path：报告和运行快照位置。
+- report.pdf_path：包含封面、数据概览、趋势图、产品对比图、文字洞察、验证和营销策略的 PDF 报告。
+
+网页完成分析后会直接嵌入预览 PDF，并提供“下载 PDF 报告”按钮。也可以使用 `GET /api/runs/<run_id>/pdf` 预览，或使用 `GET /api/runs/<run_id>/pdf/download` 下载。
 
 常见 HTTP 状态码：200 表示成功；403 表示隐私门禁或权限不通过；404 表示 run/agent 不存在；422 表示请求字段、数据格式或筛选条件错误；500 表示节点重试后仍失败，此时应先查询 trace。
 
@@ -387,7 +412,7 @@ $env:SILICONFLOW_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 
 如果不设置 Key，系统自动使用离线确定性模式，销售额、筛选、验证和图表仍可运行。`/health` 会返回当前 `llm_provider` 和 `llm_model`，不会返回 Key。
 
-营销策略 Agent 使用模型补充人群、实验和风险建议；报告 Agent 使用模型生成管理层摘要。指标计算、数据筛选、验证和权限控制仍由本地确定性代码完成。
+营销策略 Agent 使用模型直接生成策略摘要、数据依据、执行步骤、时间、衡量指标和风险应对；缺少人群、渠道、点击或转化字段时，模型会明确说明数据不足，不会虚构结论。报告 Agent 使用模型生成管理层摘要。指标计算、数据筛选、验证和权限控制仍由本地确定性代码完成。
 
 也可以使用 OpenAI 兼容接口：
 
@@ -420,6 +445,8 @@ python -m unittest discover -v
 常见问题：
 
 - data 或 csv_path 至少提供一个：请求必须传 data 或 csv_path。
+- Excel 缺少必要列：检查第一张有效工作表的表头，至少提供日期和销售额，或者日期、销量、单价。
+- Excel 文件不能超过限制：压缩文件、拆分工作表，或提高 `.env` 中的 `MAX_EXCEL_UPLOAD_MB` 后重启服务。
 - project scope requires project_id：项目内历史检索必须提供项目 ID；跨项目检索使用 scope=cross_project。
 - 数据权限与隐私门禁未通过：把 privacy_consent 设置为 true，并确保调用方已取得数据授权。
 - 报告/图表找不到：先确认进程当前工作目录和 STORAGE_PATH，再检查 run_id 对应的快照和 trace。

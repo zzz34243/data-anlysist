@@ -31,11 +31,9 @@ def resolve_selection(product_mode: str = "offline", requested_types: list[str] 
     return {"product_mode": mode, "positive": [item for item in selected if item in allowed["positive"]], "negative": [item for item in selected if item in allowed["negative"]], "labels": {item: DATA_TYPE_LABELS[item] for item in selected}, "chart_types": charts}
 
 
-def filter_data(rows: list[dict[str, Any]], *, selection: dict[str, Any], filters: dict[str, Any] | None = None, max_rows: int = 5000) -> dict[str, Any]:
-    """Fixed gate used before any model call. It filters, limits and records excluded rows."""
+def apply_row_filters(rows: list[dict[str, Any]], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Apply business filters without truncating the rows used for local aggregation."""
     filters = filters or {}
-    allowed_types = set(selection.get("positive", []) + selection.get("negative", []))
-    working = list(rows)
     date_from = str(filters["date_from"]) if filters.get("date_from") else None
     date_to = str(filters["date_to"]) if filters.get("date_to") else None
     product = str(filters["product"]) if filters.get("product") else None
@@ -43,15 +41,24 @@ def filter_data(rows: list[dict[str, Any]], *, selection: dict[str, Any], filter
     def keep(row: dict[str, Any]) -> bool:
         date = str(row.get("date") or row.get("日期") or "")
         return (not date_from or date >= date_from) and (not date_to or date <= date_to) and (not product or str(row.get("product") or row.get("产品") or "") == product) and (not channel or str(row.get("channel") or row.get("渠道") or "") == channel)
-    filtered = [row for row in working if keep(row)]
+    return [row for row in rows if keep(row)]
+
+
+def filter_data(rows: list[dict[str, Any]], *, selection: dict[str, Any], filters: dict[str, Any] | None = None, max_rows: int = 5000) -> dict[str, Any]:
+    """Filter all rows, then cap only the detail sample persisted for downstream inspection."""
+    filters = filters or {}
+    allowed_types = set(selection.get("positive", []) + selection.get("negative", []))
+    working = list(rows)
+    filtered = apply_row_filters(working, filters)
+    matched_count = len(filtered)
     requested_limit = filters.get("limit", max_rows)
     try:
         limit = min(max_rows, max(1, int(requested_limit)))
     except (TypeError, ValueError) as exc:
         raise ValueError("filters.limit 必须是正整数") from exc
-    truncated = len(filtered) > limit
-    filtered = filtered[:limit]
-    return {"rows": filtered, "excluded_count": len(working) - len(filtered), "truncated": truncated, "limit": limit, "filters": filters, "allowed_data_types": sorted(allowed_types)}
+    truncated = matched_count > limit
+    sampled = filtered[:limit]
+    return {"rows": sampled, "source_rows": len(working), "matched_count": matched_count, "excluded_count": len(working) - matched_count, "sampled_out_count": matched_count - len(sampled), "truncated": truncated, "limit": limit, "filters": filters, "allowed_data_types": sorted(allowed_types), "aggregation_scope": "all_filtered_rows"}
 
 
 def optimize_prompt(request: str, *, selection: dict[str, Any], date_range: str | None = None) -> dict[str, Any]:
@@ -72,7 +79,7 @@ def devote() -> list[dict[str, Any]]:
         {"step_order": 2, "agent": "visualization", "title": "生成柱状对比图和线性趋势图", "allowed_inputs": ["prepared_data", "selection"]},
         {"step_order": 3, "agent": "insights", "title": "计算趋势、异常和用户倾向", "allowed_inputs": ["prepared_data"]},
         {"step_order": 4, "agent": "validator", "title": "独立复算指标并验证 Findings", "allowed_inputs": ["prepared_data", "insights"]},
-        {"step_order": 5, "agent": "marketing", "title": "基于已验证结论制定策略", "allowed_inputs": ["insights", "validation"]},
+        {"step_order": 5, "agent": "marketing", "title": "基于已验证结论和字段可用性生成策略", "allowed_inputs": ["insights", "validation", "data_summary"]},
         {"step_order": 6, "agent": "report", "title": "整合图表、分析结论与营销策略", "allowed_inputs": ["prepared_data", "charts", "insights", "validation", "strategy"]},
         {"step_order": 7, "agent": "validator", "title": "复核最终报告完整性", "allowed_inputs": ["report", "insights", "prepared_data"]},
     ]

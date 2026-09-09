@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "multi-agent-marketing"
 version = "0.2.0"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1", "pydantic>=2.0,<3", "python-dotenv>=1.0,<2"]
+dependencies = ["fastapi>=0.110,<1", "uvicorn[standard]>=0.27,<1", "pydantic>=2.0,<3", "python-dotenv>=1.0,<2", "python-multipart>=0.0.9,<1", "openpyxl>=3.1,<4", "xlrd>=2.0,<3", "reportlab>=4.0,<5", "pdfplumber>=0.11,<1", "pypdf>=5.0,<7"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

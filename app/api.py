@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from .config import settings
 from .db import Database
@@ -15,6 +16,7 @@ from .memory import MemoryStore
 from .orchestrator import Orchestrator
 from .llm import build_llm_provider
 from .retention import RetentionManager
+from .excel_reader import read_excel_rows
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,11 @@ def projects() -> dict[str, Any]:
     return {"projects": memory.list_projects()}
 
 
+@app.get("/api/runs")
+def runs(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    return {"runs": memory.list_runs(limit)}
+
+
 @app.get("/api/agents")
 def agents() -> dict[str, Any]:
     return {"agents": orchestrator.list_agents()}
@@ -134,6 +141,46 @@ def analyze(body: AnalyzeRequest) -> dict[str, Any]:
     except Exception as exc: logger.exception("analysis failed"); raise HTTPException(500, str(exc)) from exc
 
 
+@app.post("/api/analyze/excel")
+async def analyze_excel(
+    file: UploadFile = File(...),
+    project_name: str = Form("默认分析项目"),
+    request: str = Form(...),
+    product_mode: str = Form("offline"),
+    privacy_consent: bool = Form(True),
+) -> dict[str, Any]:
+    max_bytes = max(settings.max_excel_upload_mb, 1) * 1024 * 1024
+    try:
+        content = await file.read(max_bytes + 1)
+        if len(content) > max_bytes:
+            raise HTTPException(413, f"Excel 文件不能超过 {settings.max_excel_upload_mb} MB")
+        rows, sheet_name = await run_in_threadpool(read_excel_rows, content, file.filename or "")
+        result = await run_in_threadpool(
+            orchestrator.analyze,
+            project_name=project_name.strip() or "默认分析项目",
+            request=request.strip(),
+            data=rows,
+            source_name=f"{file.filename} / {sheet_name}",
+            product_mode=product_mode,
+            privacy_consent=privacy_consent,
+        )
+        return {
+            "upload": {"filename": file.filename, "sheet_name": sheet_name, "source_rows": len(rows)},
+            **result,
+        }
+    except HTTPException:
+        raise
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("excel analysis failed")
+        raise HTTPException(500, str(exc)) from exc
+    finally:
+        await file.close()
+
+
 @app.post("/api/agents/{agent_name}/run")
 def run_agent(agent_name: str, body: AgentRunRequest) -> dict[str, Any]:
     try: return {"agent": agent_name, "result": orchestrator.run_agent(agent_name, body.payload, body.context)}
@@ -146,6 +193,48 @@ def run_detail(run_id: str) -> dict[str, Any]:
     result = memory.get_run(run_id)
     if not result: raise HTTPException(404, "run not found")
     return result
+
+
+@app.get("/api/runs/{run_id}/pdf")
+def run_pdf(run_id: str) -> FileResponse:
+    if not memory.get_run(run_id):
+        raise HTTPException(404, "run not found")
+    path = (settings.storage_path / "reports" / f"{run_id}-report.pdf").resolve()
+    reports_dir = (settings.storage_path / "reports").resolve()
+    if reports_dir not in path.parents or not path.is_file():
+        raise HTTPException(404, "PDF report not found")
+    return FileResponse(path, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{run_id}-report.pdf"'})
+
+
+@app.get("/api/runs/{run_id}/pdf/download")
+def download_run_pdf(run_id: str) -> FileResponse:
+    if not memory.get_run(run_id):
+        raise HTTPException(404, "run not found")
+    path = (settings.storage_path / "reports" / f"{run_id}-report.pdf").resolve()
+    reports_dir = (settings.storage_path / "reports").resolve()
+    if reports_dir not in path.parents or not path.is_file():
+        raise HTTPException(404, "PDF report not found")
+    return FileResponse(path, media_type="application/pdf", filename=f"{run_id}-销售分析报告.pdf")
+
+
+@app.get("/api/runs/{run_id}/chart/{chart_name}")
+def run_chart(run_id: str, chart_name: str) -> FileResponse:
+    if chart_name not in {"bar", "line"} or not memory.get_run(run_id):
+        raise HTTPException(404, "chart not found")
+    path = (settings.storage_path / "charts" / f"{run_id}-{chart_name}.svg").resolve()
+    charts_dir = (settings.storage_path / "charts").resolve()
+    if charts_dir not in path.parents or not path.is_file():
+        raise HTTPException(404, "chart not found")
+    return FileResponse(path, media_type="image/svg+xml")
+
+
+@app.get("/api/logs")
+def logs(tail: int = Query(default=200, ge=1, le=2000)) -> dict[str, Any]:
+    path = (settings.storage_path / "logs" / "app.log").resolve()
+    if not path.is_file():
+        return {"lines": [], "path": str(path)}
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return {"lines": lines[-tail:], "path": str(path)}
 
 
 @app.get("/api/runs/{run_id}/memory")

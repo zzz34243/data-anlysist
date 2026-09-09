@@ -67,6 +67,16 @@ class MemoryStore:
         with self.db.connection() as conn:
             return [dict(row) for row in conn.execute("SELECT * FROM projects ORDER BY created_at DESC")]
 
+    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.db.connection() as conn:
+            rows = conn.execute("SELECT r.id,r.project_id,p.name project_name,r.status,r.started_at,r.finished_at,r.error,r.snapshot_path,r.request_json FROM runs r LEFT JOIN projects p ON p.id=r.project_id ORDER BY r.started_at DESC LIMIT ?", (max(1, min(int(limit), 200)),)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["request"] = loads(item.pop("request_json"), {})
+            result.append(item)
+        return result
+
     def create_plan(self, *, actor: str, project_id: str, run_id: str, objective: str, optimized_prompt: str, steps: list[dict[str, Any]], selection: dict[str, Any]) -> str:
         if actor != "orchestrator":
             raise PermissionError("Plan 只有主控可写")
